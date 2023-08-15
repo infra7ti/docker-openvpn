@@ -1,0 +1,13 @@
+version: "3.8"
+name: openvpn
+
+services:
+  builder:
+    build:
+      context: ${PWD}
+      dockerfile: ${VERSION}/${TARGET_OS}/Dockerfile
+      tags:
+        - infra7/openvpn:latest
+        - infra7/openvpn:${VERSION}-${TARGET_OS}
+    image: infra7/openvpn:latest
+    network_mode: host

@@ -1,0 +1,83 @@
+#!/bin/bash
+
+function usage {
+  syntax='\n%s %s %s %s %s\n'
+  cols='%-30s%s\n'
+  me=$(basename $0)
+
+  printf "${syntax}" $"Usage:" "${me}" "[options]" "SERVER" "CLIENTS"
+  printf '%0.s\u2504' {1..80}
+  printf '\n%s\n' $"Options:"
+  printf "${cols}" "  -h" $"Shows this help and exits"
+  printf '\n%s\n' $"Variables:"
+
+  printf '\n%s\n' $"Arguments | Environment variables:"
+  printf "${cols}" "  OVPN_SERVER" $"The name of the generated server profile"
+  printf "${cols}" " " $"Default: OVPN_SERVER is unset"
+  printf "${cols}" "  OVPN_CLIENTS" $"A comma separated list of server clients"
+  printf "${cols}" " " $"Default: OVPN_CLIENT is unset"
+  printf '\n'
+  exit 1
+}
+
+function create_server_clients() {
+  server=${OVPN_SERVER:-"default"}
+
+  export EASYRSA_PKI="${OPENVPN_CONFDIR}/server/${server}/pki"
+  export EASYRSA_BATCH="true"
+
+  if [ ${#OVPN_CLIENTS} -gt 0 ]; then
+    for client in ${OVPN_CLIENTS}; do
+      printf $"Creating client key (server='%s', client='%s')\n" \
+        "${server}" "${client}"
+      easyrsa --nopass build-client-full "${client}"
+      create_client_config "${client}"
+    done
+  else
+    usage
+  fi
+}
+
+function create_client_config() {
+  client=${1:-}
+  server=${OVPN_SERVER:-"default"}
+  template="${OPENVPN_TEMPLATEDIR}/client.ovpn"
+
+  if [ ! -z "${client}" ]; then
+    conffile="${OPENVPN_CONFDIR}/server/${server}/configs/${client}.ovpn"
+
+    export EASYRSA_PKI="${OPENVPN_CONFDIR}/server/${server}/pki"
+    export SERVER_EXTERNAL_IP=$(wget -qO - ipinfo.io/ip)
+    export SERVER_CACERT="$(< ${EASYRSA_PKI}/ca.crt)"
+    export SERVER_CERT="$(< ${EASYRSA_PKI}/issued/${server}.crt)"
+    export CLIENT_KEY="$(< ${EASYRSA_PKI}/private/${client}.key)"
+    export SERVER_TLS_AUTH_KEY="$(< ${EASYRSA_PKI}/ta.key)"
+
+    printf $"Creating client config (server='%s', client='%s')\n" \
+      "${server}" "${client}"
+    mkdir -p "$(dirname "${conffile}")"
+    envsubst < "${template}" > "${conffile}"
+  fi
+}
+
+# -- Main ----------------------------------------------------------------------
+
+# Default paths
+: ${OPENVPN_CONFDIR:=/etc/openvpn}
+: ${OPENVPN_TEMPLATEDIR:=/usr/share/openvpn/templates}
+
+optstring=":h"
+while getopts ${optstring} _opt; do
+  case ${_opt} in
+    h) usage ;;
+    ?) echo "Invalid option: -${OPTARG}." && exit 2 ;;
+  esac
+done
+
+: ${OVPN_SERVER:=${OVPN_SERVER:-${@:((OPTIND + 0)):1}}}
+: ${OVPN_CLIENTS:=${OVPN_CLIENTS:-${@:((OPTIND + 1))}}}
+
+create_server_clients
+create_client_config
+
+# vim: ts=2:sw=2:sts=2:et

@@ -2,53 +2,54 @@
 ***OpenVPN in a Docker container complete with an EasyRSA PKI CA.***
 ***
 
-`WARNING:` This is a draft documentation - instructions are not verified yet
-***
-
 ## Server Setup
 
 ### 1. First create a volume to store OpenVPN permanent configuration
 
 #### a) Using a docker volume container
 ```bash
-export OVPN_DATA=openvpn_data
-docker volume create --name ${OVPN_DATA}
+export OPENVPN_DATA=openvpn_data
+docker volume create --name ${OPENVPN_DATA}
 ```
 
 #### b) Using a local directory on host
 ```bash
-export OVPN_DATA=${PWD}/ovpn_data
-mkdir -p ${OVPN_DATA}
+export OPENVPN_DATA=${PWD}/data
+mkdir -p ${OPENVPN_DATA}
 ```
 
 ### 2. Initialize the server configuration
 ```bash
+export COUNTRY="WW"
+export PROVINCE="The Internet"
+export CITY="N/A"
+export COMPANY="Acme Inc."
+export EMAIL="mail@example.com"
+export OU="OpenVPN"
+export SERVER="myserver"
+
 docker run \
   --rm \
+  -e EASYRSA_REQ_SN="${COUNTRY}/${PROVINCE}/${CITY}/${COMPANY}/${EMAIL}/${OU}" \
   -v ${OVPN_DATA}:/etc/openvpn \
-  infra7/openvpn initopenvpn \
-    -u udp://vpn.example.org
-```
-```bash
-docker run \
-  --rm \
-  -v ${OVPN_DATA}:/etc/openvpn \
-  infra7/openvpn initpki
+  infra7/openvpn \
+    ovpn-create-server ${SERVER}
 ```
 
-### 3. Generate a client certificate
+### 3. Generate clients configurations
 ```bash
+export CLIENT1="client1"
+export CLIENT1="client2"
 docker run \
   --rm \
   -v ${OVPN_DATA}:/etc/openvpn \
-  infra7/openvpn easyrsa \
-    build-client-full ${CLIENTNAME}
+  infra7/openvpn ovpn-create-client ${SERVER} ${CLIENT1} ${CLIENT2}
 ```
 ```bash
 docker run \
   --rm \
   -v ${OVPN_DATA}:/etc/openvpn \
-  infra7/openvpn getclient ${CLIENTNAME} 
+  infra7/openvpn cat /etc/openvpn/${SERVER}/configs/${CLIENT1}.ovpn
     > ${CLIENTNAME}.conf
 ```
 
@@ -73,11 +74,11 @@ docker run \
 Run a temporary container with named volume mapped to /etc/openvpn
 ```bash
 export OVPN_DATA=openvpn_data
-```
-```bash
+
 docker run \
   --rm \
   --name ovpn-temp \
+  --detach \
   -v ${OVPN_DATA}:/etc/openvpn \
   scratch \
   sleep infinity
@@ -85,7 +86,7 @@ docker run \
 Copy configuration file(s) to /etc/openvpn inside the container
 ```bash
 docker cp \
-  /path/to/config/${CLIENTNAME}.conf \
+  /path/to/config/${CLIENT1}.ovpn \
   ovpn-temp:/etc/openvpn/client/
 ```
 Then stop the temporary container
@@ -102,7 +103,7 @@ mkdir -p ${OVPN_DATA}
 ```
 Then copy configuration file(s) to it
 ```bash
-cp /path/to/files/${CLIENTNAME}.conf ${OVPN_DATA}/client/
+cp /path/to/files/${CLIENT1}.ovpn ${OVPN_DATA}/client/
 ```
 
 ### 2. Start OpenVPN server process
@@ -119,24 +120,9 @@ docker run \
 
 ## Advanced Options
 
-#### - Revoke a client certificate
-If you need to remove access for a client then you can revoke the client certificate by running
-```bash
-docker run -v ${OVPN_DATA}:/etc/openvpn --rm -it infra7/openvpn revokeclient ${CLIENTNAME}
-```
-
-#### - List all generated certificate names
-```bash
- docker run -v ${OVPN_DATA}:/etc/openvpn --rm infra7/openvpn listcerts
-```
-
-#### - Renew the CRL
-```bash
-docker run -v ${OVPN_DATA}:/etc/openvpn --rm -it infra7/openvpn revokeclient ${CLIENTNAME}
-```
-
-#### - Adjust container time according to host time
+### - Adjust container time according to host time
 To set cointainer date/time to be the same as in the host map /etc/localtime to container (using "docker -v"):
+
 ```bash
 docker run \
   (...) \
@@ -144,48 +130,11 @@ docker run \
   infra7/openvpn
 ```
 
-#### - Enable Radius Authentication
-Add additional settings to your server configuration file:
-```
-auth-user-pass-verify "/usr/local/bin/ovpn-radius auth " via-file # authenticate to radius
-client-connect "/usr/local/bin/ovpn-radius acct " # sent acounting request start and update to radius
-client-disconnect "/usr/local/bin/ovpn-radius stop " # sent acounting request stop to radius
-```
+### - Enable Debug Output
+To enable (bash) debug output set the environment variable OPENVPN_DEBUG and value of _true_ (using "docker -e")
 
-Adjust configuration in `/etc/openvpn/plugin/config.json` with your own enviroment and data:
-```
-{
-    "LogFile": "/proc/self/fd/1",
-    "ServerInfo":
-    {
-      "Identifier": "OpenVPN",
-      "IpAddress": "192.168.255.1",
-      "PortType": "5",
-      "ServiceType": "5"
-    },
-    "Radius":
-    {
-      "Authentication":
-      {
-        "Server": "10.10.10.124:1812",
-        "Secret": "s3cr3t"
-      },
-      "Accounting":
-      {
-        "Server": "10.10.10.124:1813",
-        "Secret": "s3cr3t"
-      }
-    }
-}
-```
-
-> `Note:` Read more at https://github.com/rakasatria/ovpn-radius
-
-
-#### - Enable Debug Output
-To enable (bash) debug output set an environment variable with the name DEBUG and value of 1 (using "docker -e")
 ```bash
-docker run -e DEBUG=1 \
+docker run -e OPENVPN_DEBUG=true \
   (...) \
   infra7/openvpn
 ```
@@ -193,32 +142,35 @@ docker run -e DEBUG=1 \
 ## Default settings and features
 * OpenVPN 2.6.0+
 * Easy-RSA v3.0.1+
-* tun mode because it works on the widest range of devices. tap mode, for instance, does not work on Android, except if the device is rooted.
-* The UDP server uses192.168.255.0/24 for clients.
+* tun mode because it works on the widest range of devices. tap mode, for instance, does not work on Android, except if the device is rooted
+* The UDP server uses 10.8.0.0/24 and subnet topology for clients
 * TLS 1.2 minimum
 * TLS auth key for HMAC security
 * Diffie-Hellman parameters for perfect forward secrecy
-* Verification of the server certificate subject
 * Extended Key usage check of both client and server certificates
 * 2048 bits key size
 * Client certificate revocation functionality
 * SHA256 signature hash
-* AES-256-CBC cipher
+* AES-256-GCM cipher
+* Data ciphers limited to AES-256-GCM:AES-128-GCM:AES-256-CBC:AES-128-CBC
+* Support for multiple servers and clients
+
+## Proposed settings and features
+* Verification of the server certificate subject
 * TLS cipher limited to TLS-ECDHE-RSA-WITH-AES-128-GCM-SHA256, TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256, TLS-DHE-RSA-WITH-AES-256-GCM-SHA384 or TLS-DHE-RSA-WITH-AES-256-CBC-SHA256
 * Compression enabled and set to adaptive
 * Floating client ip's enabled
 * Tweaks for Windows clients
-* net30 topology because it works on the widest range of OS's. p2p, for instance, does not work on Windows.
-* Google DNS (8.8.4.4 and 8.8.8.8)
-* The configuration is located in /etc/openvpn
-* Certificates are generated in /etc/openvpn/pki
 
 ## Building Docker image locally
 For now only OpenVPN 2.6.x on Alpine are supported
+
 ```bash
+export VERSION=2.6
+export TARGET_OS=alpine
+
 git clone https://github.com/infra7ti/docker-openvpn.git && cd docker-openvpn
-VERSION=2.6 TARGET_OS=alpine docker-compose build --no-cache
+docker buildx build -t infra7/openvpn:latest -f ${VERSION}/${TARGET_OS}/Dockerfile --no-cache
 ```
 
 ***
-Based on: kylemanna/docker-openvpn and martin/openvpn

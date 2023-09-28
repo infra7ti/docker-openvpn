@@ -1,0 +1,94 @@
+#!/bin/bash
+
+set -euo pipefail
+exec 3>&1
+
+function create_dev_tun() {
+  mkdir /dev/net \
+    && mknod /dev/net/tun c 10 200
+}
+
+function get_configs() {
+  _dir=${1:-}
+  find ${_dir} -maxdepth 1 -type f -regex ".*\.\(conf\|ovpn\)" | \
+    while read _cfg; do
+      echo -n "$(basename ${_cfg}) "
+    done
+}
+
+function run_servers() {
+  for cfg in "$(get_configs ${OPENVPN_CONFDIR}/server)"; do
+    echo -ne "Running server configuration: ${cfg}: "
+    /bin/sh -c "exec openvpn \
+      --status /proc/self/fd/1 \
+      --status-version 2 \
+      --suppress-timestamps \
+      --cipher AES-256-GCM \
+      --data-ciphers AES-256-GCM:AES-128-GCM:AES-256-CBC:AES-128-CBC \
+      --cd ${OPENVPN_CONFDIR}/server \
+      --config ${cfg}" &
+    pids+=([$!]=${cfg})
+  done
+}
+
+function run_clients() {
+  for cfg in "$(get_configs ${OPENVPN_CONFDIR}/client)"; do
+    echo -ne "Running client configuration: ${cfg}: "
+    /bin/sh -c "exec openvpn \
+      --suppress-timestamps \
+      --nobind \
+      --cd ${OPENVPN_CONFDIR}/client \
+      --config ${cfg}" &
+    pids+=([$!]=${cfg})
+  done
+}
+
+function wait_processes() {
+  while true; do
+    alive_pids=()
+    for _pid in "${!pids[@]}"; do
+	kill -0 "${_pid}" 2>/dev/null \
+	    && alive_pids+="${_pid} "
+    done
+    [ ${#alive_pids[@]} -eq 0 ] && break
+    sleep 5
+  done
+}
+
+
+# -- Main ---------------------------------------------------------------------
+
+# Default config path
+: ${OPENVPN_CONFDIR:=/etc/openvpn}
+
+# Debug
+[ "${OPENVPN_DEBUG:-false}" == "true" ] && set -x
+
+# Ensure /dev/net/tun exists
+test -c /dev/net/tun || create_dev_tun
+
+# Register subprocesses pids
+declare -A pids=()
+
+# Check for failover shell
+case ${1:-} in
+  *bash  ) exec /bin/bash ;;
+  *sh    ) exec /bin/sh ;;
+  ovpn-* ) exec "${@}" ;;
+esac
+
+# Run openvpn
+case ${OPENVPN_MODE:-server} in
+  client ) run_clients ;;
+  server ) run_servers ;;
+  mixed  ) 
+    run_servers 
+    run_clients 
+  ;;
+  *      ) echo "Unknown runtime mode: ${OPENVPN_MODE}" && exit 1 ;;
+esac
+
+# Wait for background processes
+wait_processes
+
+exit 0

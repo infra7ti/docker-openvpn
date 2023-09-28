@@ -1,0 +1,16 @@
+version: "3.8"
+name: openvpn
+
+services:
+  alpine:
+    build:
+      context: ${PWD}
+      dockerfile: ${OPENVPN_VERSION}/alpine/Dockerfile
+      platforms:
+        - "linux/amd64"
+        - "linux/arm64"        
+      tags:
+        - infra7/openvpn:${OPENVPN_VERSION}-alpine
+        - infra7/openvpn:latest
+    image: infra7/openvpn:${OPENVPN_VERSION}-alpine
+    network_mode: host

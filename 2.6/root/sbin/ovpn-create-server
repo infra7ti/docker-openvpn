@@ -1,0 +1,80 @@
+#!/bin/bash
+
+function usage {
+  syntax='\n%s %s %s %s %s\n'
+  cols='%-30s%s\n'
+  me=$(basename $0)
+
+  printf "${syntax}" $"Usage:" "${me}" "[options]" "OVPN_SERVER"
+  printf '%0.s\u2504' {1..80}
+  printf '\n%s\n' $"Options:"
+  printf "${cols}" "  -h" $"Shows this help and exits"
+  printf '\n%s\n' $"Arguments | Environment variables:"
+  printf "${cols}" "  OVPN_SERVER" $"The name of the generated server profile"
+  printf "${cols}" " " "Default: OVPN_SERVER=default"
+  printf "${cols}" "  EASYRSA_REQ_SN" \
+    $"The SubjectName field used in the CA certificate"
+  printf "${cols}" " " "Default: EASYRSA_REQ_SN is unset"
+  printf '\n'
+  exit 1
+}
+
+function create_server_config() {
+  server=${OVPN_SERVER:-"default"}
+  template="${OPENVPN_TEMPLATEDIR}/server.ovpn"
+  configfile="${OPENVPN_CONFDIR}/server/${server}.ovpn"
+
+  mkdir -p "$(dirname "${configfile}")"
+  OVPN_SERVER="${server}" envsubst < "${template}" > "${configfile}"
+}
+
+function create_server_pki() {
+  server=${OVPN_SERVER:-"default"}
+  template="${OPENVPN_TEMPLATEDIR}/easyrsa.vars"
+
+  export EASYRSA_PKI="${OPENVPN_CONFDIR}/server/${server}/pki"
+  export EASYRSA_BATCH="true"
+
+  IFS='/' read -ra fields <<< "${EASYRSA_REQ_SN}"
+  export EASYRSA_REQ_COUNTRY="$(echo ${fields[0]:0:2} | \
+    tr '[:lower:]' '[:upper:]')"
+  export EASYRSA_REQ_PROVINCE="${fields[1]//\ /}"
+  export EASYRSA_REQ_CITY="${fields[2]//\ /}"
+  export EASYRSA_REQ_ORG="${fields[3]//\ /.}"
+  export EASYRSA_REQ_EMAIL="${fields[4]//\ /}"
+  export EASYRSA_REQ_OU="${fields[5]//\ /.}"
+
+  easyrsa init-pki
+  envsubst < "${template}" > "${EASYRSA_PKI}/vars"
+
+  easyrsa gen-dh
+  easyrsa --nopass build-ca
+  easyrsa --nopass build-server-full "${server}"
+
+  set -x
+  openvpn --genkey secret "${EASYRSA_PKI}/ta.key"
+}
+
+# -- Main ----------------------------------------------------------------------
+
+# Default paths
+: ${OPENVPN_CONFDIR:=/etc/openvpn}
+: ${OPENVPN_TEMPLATEDIR:=/usr/share/openvpn/templates}
+: ${EASYRSA_REQ_SN:=}
+
+optstring=":h"
+while getopts ${optstring} _opt; do
+  case ${_opt} in
+    h) usage ;;
+    ?) echo "Invalid option: -${OPTARG}." && exit 2 ;;
+  esac
+done
+
+: ${OVPN_SERVER:=${OVPN_SERVER:-${@:((OPTIND + 0)):1}}}
+
+test -z "${EASYRSA_REQ_SN}" && usage
+
+create_server_config
+create_server_pki 
+
+# vim: ts=2:sw=2:sts=2:et

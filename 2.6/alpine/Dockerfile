@@ -1,6 +1,6 @@
 # Dockerfile for infra7/docker-openvpn
 
-ARG ALPINE_VERSION=3.20
+ARG ALPINE_VERSION=3.22
 FROM alpine:${ALPINE_VERSION}
 
 ARG OPENVPN_VERSION=2.6
